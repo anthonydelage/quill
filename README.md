@@ -76,7 +76,8 @@ Optional, at `~/.config/quill/config.json`:
 {
   "recordings_dir": "~/Recordings",
   "transcription": { "enabled": true, "engine": "parakeet" },
-  "on_stop": "my-hook"
+  "on_stop": "my-hook",
+  "hotkeys": { "toggle_recording": "cmd+opt+ctrl+r" }
 }
 ```
 
@@ -93,6 +94,13 @@ Optional, at `~/.config/quill/config.json`:
   argument, **after the transcript is written** (or right after recording if
   transcription is disabled). Wire it to whatever comes next: summarization,
   filing, indexing.
+- `hotkeys.toggle_recording` — global keyboard shortcut that starts/stops
+  recording from anywhere in macOS, no menu click needed. Default
+  `cmd+opt+ctrl+r`. Combos: any of `cmd`/`shift`/`opt`/`ctrl` plus a letter,
+  digit, `space`, `tab`, `return`, `escape`, `delete`, or `f1`–`f12`, joined
+  with `+` (e.g. `ctrl+opt+space`). Set to `""` to disable. If the combo is
+  already claimed by another app, quill logs a warning to stderr and runs
+  without it — the menu still works.
 
 ## CLI
 

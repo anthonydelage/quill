@@ -6,7 +6,8 @@ import Foundation
 ///       "recordings_dir": "~/Recordings",
 ///       "transcription": { "enabled": true, "engine": "parakeet" },
 ///       "mic_voice_processing": true,
-///       "on_stop": "my-hook"
+///       "on_stop": "my-hook",
+///       "hotkeys": { "toggle_recording": "cmd+opt+ctrl+r" }
 ///     }
 ///
 /// Resolution order for the recordings root: --out flag > config file >
@@ -46,6 +47,15 @@ enum Config {
 
     private static func transcription() -> [String: Any]? {
         load()?["transcription"] as? [String: Any]
+    }
+
+    /// Global hotkey combo for `name` (e.g. `"toggle_recording"`), such as
+    /// `"cmd+shift+r"`. Falls back to `defaultCombo` when unset. Set the key
+    /// to `""` in config to disable that hotkey entirely (returns nil).
+    static func hotkey(_ name: String, default defaultCombo: String) -> String? {
+        guard let hotkeys = load()?["hotkeys"] as? [String: Any] else { return defaultCombo }
+        guard let value = hotkeys[name] as? String else { return defaultCombo }
+        return value.isEmpty ? nil : value
     }
 
     /// Apple voice processing (acoustic echo cancellation) on the mic, so
