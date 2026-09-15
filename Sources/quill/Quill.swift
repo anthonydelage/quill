@@ -79,7 +79,7 @@ struct Doctor: ParsableCommand {
 @MainActor
 final class AppController {
     private let root: URL
-    private let menuBar = MenuBarController()
+    private let menuBar: MenuBarController
     private let transcription = TranscriptionCoordinator()
     private var session: RecordingSession?
     private var ticker: Timer?
@@ -88,13 +88,28 @@ final class AppController {
 
     init(root: URL) {
         self.root = root
+
+        // Parsed once and handed to both the menu (to display the real
+        // combo) and GlobalHotKey (to register it) — they can't drift apart.
+        let toggleCombo = Config.hotkey("toggle_recording", default: "cmd+opt+ctrl+r").flatMap {
+            raw -> HotKeyCombo? in
+            guard let combo = HotKeyCombo(raw) else {
+                FileHandle.standardError.write(Data(
+                    "warning: unrecognized hotkey \"\(raw)\" — ignoring\n".utf8
+                ))
+                return nil
+            }
+            return combo
+        }
+
+        menuBar = MenuBarController(toggleHotKey: toggleCombo)
         menuBar.onToggle = { [weak self] in self?.toggle() }
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
         menuBar.update(recording: false, elapsed: nil)
 
-        if let combo = Config.hotkey("toggle_recording", default: "cmd+opt+ctrl+r") {
-            toggleHotKey = GlobalHotKey(combo: combo) { [weak self] in self?.toggle() }
+        if let toggleCombo {
+            toggleHotKey = GlobalHotKey(combo: toggleCombo) { [weak self] in self?.toggle() }
         }
 
         Task { [transcription, root] in
