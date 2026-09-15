@@ -14,7 +14,11 @@ final class MenuBarController {
     var onOpenFolder: (() -> Void)?
     var onQuit: (() -> Void)?
 
-    init() {
+    /// - Parameter toggleHotKey: the actual global shortcut registered for
+    ///   start/stop recording (nil if none is configured), so the menu item
+    ///   displays the combo that really works instead of an unrelated local
+    ///   one that only fires while this menu happens to be open.
+    init(toggleHotKey: HotKeyCombo?) {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
         let menu = NSMenu()
@@ -34,14 +38,20 @@ final class MenuBarController {
         toggleItem = NSMenuItem(
             title: "Start recording",
             action: #selector(toggleClicked),
-            keyEquivalent: "r"
+            keyEquivalent: toggleHotKey?.menuKeyEquivalent ?? ""
         )
+        if let toggleHotKey {
+            toggleItem.keyEquivalentModifierMask = toggleHotKey.menuModifierMask
+        }
         menu.addItem(toggleItem)
 
+        // No key equivalent: this isn't backed by a global hotkey, and a
+        // local-only one here would misleadingly look like it works from
+        // anywhere the way the recording toggle's does.
         let openFolder = NSMenuItem(
             title: "Open recordings folder",
             action: #selector(openFolderClicked),
-            keyEquivalent: "o"
+            keyEquivalent: ""
         )
         menu.addItem(openFolder)
 
