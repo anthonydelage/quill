@@ -26,6 +26,10 @@ let package = Package(
                     "-Xlinker", "__info_plist",
                     "-Xlinker", "Sources/quill/Info.plist",
                 ]),
+                // Carbon's RegisterEventHotKey is the only way to get a
+                // system-wide keyboard shortcut on macOS; AppKit has no
+                // public equivalent.
+                .linkedFramework("Carbon"),
             ]
         ),
     ]

@@ -83,6 +83,8 @@ final class AppController {
     private let transcription = TranscriptionCoordinator()
     private var session: RecordingSession?
     private var ticker: Timer?
+    // Held for its lifetime — deinit unregisters the hotkey with Carbon.
+    private var toggleHotKey: GlobalHotKey?
 
     init(root: URL) {
         self.root = root
@@ -90,6 +92,10 @@ final class AppController {
         menuBar.onOpenFolder = { [weak self] in self?.openFolder() }
         menuBar.onQuit = { [weak self] in self?.shutdown() }
         menuBar.update(recording: false, elapsed: nil)
+
+        if let combo = Config.hotkey("toggle_recording", default: "cmd+opt+ctrl+r") {
+            toggleHotKey = GlobalHotKey(combo: combo) { [weak self] in self?.toggle() }
+        }
 
         Task { [transcription, root] in
             await transcription.setStatusHandler { status in
