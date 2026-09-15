@@ -2,10 +2,53 @@ import AVFoundation
 import FluidAudio
 import Foundation
 
-/// Parakeet TDT 0.6B v2 (English) via FluidAudio's Core ML port. Models
-/// download once into FluidAudio's managed cache (~600 MB); after that,
-/// transcription runs entirely on-device at roughly 20 seconds per hour of
-/// audio on Apple Silicon.
+/// Which parakeet model a configured language maps to. v3 is the default: it
+/// covers 25 European languages at the same parameter count and speed as v2,
+/// and takes an optional script hint that keeps the decoder from emitting
+/// wrong-alphabet tokens on ambiguous audio. v2 is English-only and is kept
+/// for anyone who wants the dedicated English model.
+struct ParakeetVariant: Sendable {
+    let version: AsrModelVersion
+    let hint: Language?
+
+    var model: String {
+        switch version {
+        case .v3: return "parakeet-tdt-0.6b-v3-coreml"
+        default: return "parakeet-tdt-0.6b-v2-coreml"
+        }
+    }
+
+    /// On-disk size once downloaded, for the doctor's "not cached yet" warning.
+    var downloadSize: String {
+        switch version {
+        case .v3: return "~470 MB"
+        default: return "~450 MB"
+        }
+    }
+
+    /// `"auto"` (the default) runs v3 with no hint, so a meeting that switches
+    /// languages still transcribes. `"en"` picks the English-only v2 model.
+    /// Anything else is a v3 language code, which hints the decoder.
+    static func resolve(_ language: String) -> ParakeetVariant {
+        switch language {
+        case "auto": return ParakeetVariant(version: .v3, hint: nil)
+        case "en": return ParakeetVariant(version: .v2, hint: nil)
+        default:
+            guard let hint = Language(rawValue: language) else {
+                FileHandle.standardError.write(Data(
+                    "warning: unsupported transcription language \"\(language)\" — detecting automatically\n".utf8
+                ))
+                return ParakeetVariant(version: .v3, hint: nil)
+            }
+            return ParakeetVariant(version: .v3, hint: hint)
+        }
+    }
+}
+
+/// Parakeet TDT 0.6B via FluidAudio's Core ML port. Models download once into
+/// FluidAudio's managed cache (~450 MB); after that, transcription runs
+/// entirely on-device at roughly 20 seconds per hour of audio on Apple
+/// Silicon.
 actor ParakeetEngine: TranscriptionEngine {
     enum EngineError: Error, CustomStringConvertible {
         case notPrepared
@@ -22,14 +65,27 @@ actor ParakeetEngine: TranscriptionEngine {
     }
 
     nonisolated let name = "parakeet"
-    nonisolated let model = "parakeet-tdt-0.6b-v2-coreml"
+    nonisolated let model: String
 
+    private let variant: ParakeetVariant
     private var manager: AsrManager?
+
+    init(variant: ParakeetVariant) {
+        self.variant = variant
+        self.model = variant.model
+    }
 
     func prepare() async throws {
         guard manager == nil else { return }
-        let models = try await AsrModels.downloadAndLoad(version: .v2)
-        let manager = AsrManager()
+        let models = try await AsrModels.downloadAndLoad(version: variant.version)
+        // FluidAudio recommends disabling the 80ms mel-context prepend for v3
+        // multilingual long-form batch work (their issue #594: the prepend can
+        // shift the encoder's first-frame distribution enough that the decoder
+        // drifts back to its English-biased prior). Meetings are exactly that
+        // workload. v2 keeps the prepend, which fixes blank predictions at
+        // chunk boundaries on long English audio.
+        let config = ASRConfig(melChunkContext: variant.version != .v3)
+        let manager = AsrManager(config: config)
         try await manager.loadModels(models)
         self.manager = manager
     }
@@ -51,7 +107,7 @@ actor ParakeetEngine: TranscriptionEngine {
         }
 
         var state = try TdtDecoderState()
-        let result = try await manager.transcribe(audio, decoderState: &state)
+        let result = try await manager.transcribe(audio, decoderState: &state, language: variant.hint)
 
         let words = buildWordTimings(from: result.tokenTimings ?? [])
         guard !words.isEmpty else {

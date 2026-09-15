@@ -4,7 +4,7 @@ import Foundation
 ///
 ///     {
 ///       "recordings_dir": "~/Recordings",
-///       "transcription": { "enabled": true, "engine": "parakeet" },
+///       "transcription": { "enabled": true, "engine": "parakeet", "language": "auto" },
 ///       "mic_voice_processing": true,
 ///       "on_stop": "my-hook",
 ///       "hotkeys": { "toggle_recording": "cmd+opt+ctrl+r" }
@@ -43,6 +43,13 @@ enum Config {
     /// warns and falls back for anything else.
     static func transcriptionEngine() -> String {
         transcription()?["engine"] as? String ?? "parakeet"
+    }
+
+    /// Spoken language of the recordings, as a two-letter code (`"fr"`).
+    /// Default `"auto"` — the multilingual model with no hint, which handles a
+    /// meeting that switches languages. Set `"en"` for the English-only model.
+    static func transcriptionLanguage() -> String {
+        transcription()?["language"] as? String ?? "auto"
     }
 
     private static func transcription() -> [String: Any]? {

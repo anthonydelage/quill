@@ -86,13 +86,14 @@ enum DoctorReport {
                 remediation: nil
             )
         }
-        let cache = AsrModels.defaultCacheDirectory(for: .v2)
-        if AsrModels.modelsExist(at: cache, version: .v2) {
+        let variant = ParakeetVariant.resolve(Config.transcriptionLanguage())
+        let cache = AsrModels.defaultCacheDirectory(for: variant.version)
+        if AsrModels.modelsExist(at: cache, version: variant.version) {
             return Check(name: "transcription", status: .ok, remediation: nil)
         }
         return Check(
             name: "transcription",
-            status: .warn("parakeet models not downloaded (~600 MB)"),
+            status: .warn("\(variant.model) not downloaded (\(variant.downloadSize))"),
             remediation: "downloads automatically on first transcription — record a short test session while online"
         )
     }

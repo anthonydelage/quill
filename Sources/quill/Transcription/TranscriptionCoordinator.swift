@@ -148,7 +148,9 @@ actor TranscriptionCoordinator {
                 "warning: unknown transcription engine \"\(configured)\" — using parakeet\n".utf8
             ))
         }
-        let engine = ParakeetEngine()
+        let engine = ParakeetEngine(
+            variant: ParakeetVariant.resolve(Config.transcriptionLanguage())
+        )
         try await engine.prepare()
         self.engine = engine
         return engine
