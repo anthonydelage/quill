@@ -51,12 +51,17 @@ written is still readable.
 
 ## Transcription
 
-Built in, on-device, automatic. The default engine is **Parakeet TDT 0.6B v2**
-(English) via [FluidAudio](https://github.com/FluidInference/FluidAudio)'s
-Core ML port — roughly 20 seconds per hour of audio on Apple Silicon. Models
-(~600 MB) download once on first transcription; `quill doctor` tells you
-whether they're already cached so you're never downloading after an important
-meeting.
+Built in, on-device, automatic. The default engine is **Parakeet TDT 0.6B v3**
+via [FluidAudio](https://github.com/FluidInference/FluidAudio)'s Core ML port —
+roughly 20 seconds per hour of audio on Apple Silicon. It covers 25 European
+languages and detects as it goes, so a meeting that switches between French and
+English transcribes correctly without being told. Models (~470 MB) download
+once on first transcription; `quill doctor` tells you whether they're already
+cached so you're never downloading after an important meeting.
+
+Set `transcription.language` to a two-letter code to hint the decoder when you
+know the language in advance. `"en"` is special: it selects **Parakeet TDT
+0.6B v2**, the dedicated English-only model.
 
 Each track is transcribed separately, shifted by its start offset so both
 share one clock, and merged by timestamp. Jobs run in a serial queue — you can
@@ -66,7 +71,8 @@ on next launch (the filesystem is the queue: a session with `meta.json` but no
 `transcribe.log` and never block later jobs.
 
 The engine sits behind a small protocol; a Whisper engine (WhisperKit
-large-v3-turbo) is planned as the fallback / re-transcription option.
+large-v3-turbo) is planned as the fallback / re-transcription option for
+languages Parakeet v3 doesn't cover.
 
 ## Config
 
@@ -75,7 +81,7 @@ Optional, at `~/.config/quill/config.json`:
 ```json
 {
   "recordings_dir": "~/Recordings",
-  "transcription": { "enabled": true, "engine": "parakeet" },
+  "transcription": { "enabled": true, "engine": "parakeet", "language": "auto" },
   "on_stop": "my-hook",
   "hotkeys": { "toggle_recording": "cmd+opt+ctrl+r" }
 }
@@ -84,6 +90,12 @@ Optional, at `~/.config/quill/config.json`:
 - `recordings_dir` — where sessions land. Resolution order: `--out` flag >
   config > `~/Recordings`.
 - `transcription.enabled` — set `false` to just record.
+- `transcription.language` — two-letter code for the language spoken in the
+  meeting. Default `"auto"`: the multilingual v3 model with no hint, which
+  handles bilingual meetings. Naming one of v3's 25 European languages — `fr`,
+  `es`, `de`, `it`, `pt`, `nl`, `pl`, `ru`, `uk`, `el` and the rest — hints the
+  decoder. `"en"` selects the English-only v2 model instead. An unrecognized
+  code warns and falls back to `"auto"`.
 - `mic_voice_processing` — Apple's echo cancellation on the mic (default off).
   Set `true` when recording meetings through the speakers, so playback doesn't
   bleed into the mic track and get transcribed twice as "me". The trade: while
@@ -129,7 +141,13 @@ quill install --uninstall
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
-- Parakeet v2 is English-only. Other languages will come with the Whisper
-  engine.
+- Setting `transcription.language` to `"en"` opts into the English-only v2
+  model, which fails quietly on everything else — it transcribes French
+  phonetically into English-looking nonsense rather than erroring. Leave the
+  default `"auto"` unless every meeting is English.
+- Switching `transcription.language` between `"en"` and anything else changes
+  the model, so the first recording after the switch downloads ~470 MB.
+  `quill doctor` reports whether the model for the configured language is
+  cached; record a short throwaway session while online to warm it.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.
