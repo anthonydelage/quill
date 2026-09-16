@@ -13,13 +13,27 @@ Swift binary, menu-bar tray, no app bundle.
 ```sh
 cd quill
 swift build -c release
-sudo cp .build/release/quill /usr/local/bin/quill
+sudo install -m 755 .build/release/quill /usr/local/bin/quill
 quill install --launch-at-login   # optional — runs in the background on login
 ```
 
 **Requires:** macOS 15+ (Core Audio process taps for system audio — no
 virtual device, no kernel extension). Apple Silicon recommended for
 transcription speed.
+
+### Upgrading
+
+Same three steps, plus a restart if you run the LaunchAgent:
+
+```sh
+git pull
+swift build -c release
+sudo install -m 755 .build/release/quill /usr/local/bin/quill
+launchctl kickstart -k gui/$(id -u)/com.digimata.quill   # if installed
+```
+
+Use `install`, not `cp`. See the gotcha below — `cp` produces a binary that
+macOS kills on sight.
 
 ## How to use
 
@@ -141,6 +155,13 @@ quill install --uninstall
   per-process picker if it bothers you).
 - If recordings come out silent, check System Settings → Privacy & Security →
   Screen & System Audio Recording.
+- Upgrading with `sudo cp` produces a binary that dies instantly with exit 137
+  (SIGKILL) and no output. `cp` writes through the existing inode, and the
+  kernel still has the *old* contents' code signature cached against it, so
+  every exec fails the hash check and AMFI kills the process. The binary is
+  fine — `codesign -v` passes and it runs from the build directory. Use
+  `install`, which writes a temp file and renames it into place, so the new
+  contents land on a new inode. `sudo rm` before `sudo cp` works too.
 - Setting `transcription.language` to `"en"` opts into the English-only v2
   model, which fails quietly on everything else — it transcribes French
   phonetically into English-looking nonsense rather than erroring. Leave the
