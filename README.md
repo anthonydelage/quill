@@ -170,5 +170,17 @@ quill install --uninstall
   the model, so the first recording after the switch downloads ~470 MB.
   `quill doctor` reports whether the model for the configured language is
   cached; record a short throwaway session while online to warm it.
+- Detecting a live call from outside quill: use the meeting app's own network
+  state, not the microphone. Zoom holds UDP sockets to an external media server
+  on port 8801 for a call's whole duration and none outside one, so
+  `lsof -nP -iUDP -a -c zoom.us | grep -- '->.*:8801'` is a clean in-call
+  signal — measured at 5–8 sockets during a call and zero within two seconds of
+  leaving it. Zoom's other UDP sockets are unconnected LAN-discovery ones with
+  no remote peer, hence matching on the remote address. CoreAudio's
+  `kAudioDevicePropertyDeviceIsRunningSomewhere` looks like the better answer
+  and is not: quill's own `MicRecorder` claims the default input, so once
+  recording starts the mic reads as live whatever the meeting app does. On a
+  measured call it stayed live for 70 seconds after the call ended. A
+  mic-based detector can see a meeting start and can never see one end.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.
