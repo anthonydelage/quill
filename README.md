@@ -182,5 +182,10 @@ quill install --uninstall
   recording starts the mic reads as live whatever the meeting app does. On a
   measured call it stayed live for 70 seconds after the call ended. A
   mic-based detector can see a meeting start and can never see one end.
+- A recording that spans a sleep or lid close keeps both tracks: the mic
+  restarts on whatever the default input is at wake, and the system tap
+  resumes on its own. The sleep itself is in neither track, so transcript
+  timestamps after it run behind the wall clock by the time asleep. The mic
+  restart is always raw capture, even with `mic_voice_processing` on.
 - The binary embeds its Info.plist (`__TEXT,__info_plist`) so TCC can
   attribute permissions to quill itself when running as a LaunchAgent.
