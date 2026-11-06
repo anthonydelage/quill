@@ -64,8 +64,8 @@ final class MicRecorder: @unchecked Sendable {
     /// stopped.
     private static let stallSeconds: TimeInterval = 5
 
-    /// Start capturing the mic, encoding AAC into `url` (use a .caf extension
-    /// — CAF needs no finalization pass, so a crash loses nothing written).
+    /// Start capturing the mic, encoding AAC into `url` (.caf). The packet
+    /// table is written by stop(); until then the file isn't readable.
     func start(writingTo url: URL) throws {
         guard !isRecording else { return }
         self.url = url

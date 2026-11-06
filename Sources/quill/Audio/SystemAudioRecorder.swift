@@ -39,9 +39,8 @@ final class SystemAudioRecorder {
     /// used to offset-align the two tracks' transcript timestamps.
     private(set) var firstBufferAt: Date?
 
-    /// Start capturing system audio, encoding AAC into `url` (use a .caf
-    /// extension — CAF needs no finalization pass, so a crash mid-meeting
-    /// loses nothing already written).
+    /// Start capturing system audio, encoding AAC into `url` (.caf). The
+    /// packet table is written by stop(); until then the file isn't readable.
     func start(writingTo url: URL) throws {
         guard !isRecording else { return }
 

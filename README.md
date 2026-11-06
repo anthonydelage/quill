@@ -59,9 +59,12 @@ Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 
 Two tracks on purpose: speech models do better on clean single-source audio,
 and mic-vs-system is free two-party diarization — `me` vs `them` with no
-speaker-identification model. CAF on purpose: unlike m4a, it needs no
-finalization pass — if the process dies mid-meeting, everything already
-written is still readable.
+speaker-identification model. Both tracks are AAC in CAF, and AAC
+packets vary in size, so a track is only readable once its packet table is
+written at stop. quill stops cleanly on the menu item, the hotkey, ^C, and
+SIGTERM (`launchctl kickstart -k`, logout, shutdown). A SIGKILL or a crash
+mid-meeting leaves tracks with audio but no packet table, and no `meta.json`;
+the audio is recoverable only by re-parsing the raw AAC frames.
 
 ## Transcription
 
@@ -96,6 +99,7 @@ Optional, at `~/.config/quill/config.json`:
 {
   "recordings_dir": "~/Recordings",
   "transcription": { "enabled": true, "engine": "parakeet", "language": "auto" },
+  "max_recording_minutes": 120,
   "on_stop": "my-hook",
   "hotkeys": { "toggle_recording": "cmd+opt+ctrl+r" }
 }
@@ -116,6 +120,11 @@ Optional, at `~/.config/quill/config.json`:
   the voice unit is live, macOS ducks other playback slightly (`.min` ducking
   is configured, but it can't be zeroed). On headphones there's no echo to
   cancel, so raw capture is the better default.
+- `max_recording_minutes` — a recording still running after this many minutes
+  stops itself, transcribes as normal, and plays the Sosumi system sound so
+  you hear that it ended. Default `120`: a forgotten toggle otherwise records
+  all night, and because live audio capture keeps the Mac from idle-sleeping,
+  that night is real hours of audio. Set `0` to turn the cap off.
 - `on_stop` — shell command spawned with the session directory as its
   argument, **after the transcript is written** (or right after recording if
   transcription is disabled). Wire it to whatever comes next: summarization,
