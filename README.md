@@ -59,9 +59,12 @@ Each session lands in `~/Recordings/<yyyy.MM.dd-HHmm>/`:
 
 Two tracks on purpose: speech models do better on clean single-source audio,
 and mic-vs-system is free two-party diarization — `me` vs `them` with no
-speaker-identification model. CAF on purpose: unlike m4a, it needs no
-finalization pass — if the process dies mid-meeting, everything already
-written is still readable.
+speaker-identification model. Both tracks are AAC in CAF, and AAC
+packets vary in size, so a track is only readable once its packet table is
+written at stop. quill stops cleanly on the menu item, the hotkey, ^C, and
+SIGTERM (`launchctl kickstart -k`, logout, shutdown). A SIGKILL or a crash
+mid-meeting leaves tracks with audio but no packet table, and no `meta.json`;
+the audio is recoverable only by re-parsing the raw AAC frames.
 
 ## Transcription
 
