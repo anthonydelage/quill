@@ -45,18 +45,27 @@ struct Run: ParsableCommand {
 
         let controller = AppController(root: root)
 
-        let sigint = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        sigint.setEventHandler {
-            FileHandle.standardError.write(Data("\nshutting down\n".utf8))
-            MainActor.assumeIsolated { controller.shutdown() }
+        // ^C in a terminal, and SIGTERM from launchd (`launchctl kickstart -k`,
+        // logout, shutdown). Both stop a live session cleanly: the AAC tracks
+        // only get their packet table, and the session its meta.json, on a
+        // clean stop. Without this, a restart mid-recording leaves files no
+        // reader can open. SIGKILL and crashes still can't be caught.
+        let signalSources = [SIGINT, SIGTERM].map { sig in
+            let source = DispatchSource.makeSignalSource(signal: sig, queue: .main)
+            source.setEventHandler {
+                FileHandle.standardError.write(Data("\nshutting down\n".utf8))
+                MainActor.assumeIsolated { controller.shutdown() }
+            }
+            source.resume()
+            signal(sig, SIG_IGN)
+            return source
         }
-        sigint.resume()
-        signal(SIGINT, SIG_IGN)
 
         FileHandle.standardError.write(Data(
             "quill up · recordings → \(root.path) · ^C to quit\n".utf8
         ))
         app.run()
+        withExtendedLifetime(signalSources) {}
     }
 }
 
