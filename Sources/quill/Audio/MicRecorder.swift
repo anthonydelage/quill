@@ -12,6 +12,13 @@ import Foundation
 /// sides, or it silently delivers zeroed buffers (rca-001). A first-second
 /// liveness check catches routes where even the correct graph stays silent
 /// and restarts capture raw.
+///
+/// AVAudioEngine stops for good when the input goes away: sleep, a lid
+/// close, a device unplugged or a default-input switch. A config-change
+/// observer and a no-audio watchdog rebuild the engine on the current default
+/// input and keep appending to the same file, so a meeting that spans a sleep
+/// keeps its mic track. The sleep itself is not in the track (nor in the
+/// system track, which pauses too).
 final class MicRecorder: @unchecked Sendable {
     enum RecorderError: Error, CustomStringConvertible {
         case engineStartFailed(Error)
@@ -41,6 +48,22 @@ final class MicRecorder: @unchecked Sendable {
     private var livenessPeak: Float = 0
     private var livenessSettled = false
 
+    /// The file's processing format (mono Float32 at the rate the file was
+    /// created with). Restarts convert whatever the new input delivers to it.
+    private var fileFormat: AVAudioFormat?
+    private var configObserver: NSObjectProtocol?
+    private var watchdog: Timer?
+    /// Wall-clock time of the newest buffer, written from the tap callback.
+    private let bufferClock = NSLock()
+    private var lastBufferAt = Date.distantPast
+    /// Logs only the first failure of a restart streak, not every retry.
+    private var restartFailing = false
+
+    /// Seconds without a buffer before the watchdog rebuilds the engine. A
+    /// running input delivers buffers even in silence, so a gap means capture
+    /// stopped.
+    private static let stallSeconds: TimeInterval = 5
+
     /// Start capturing the mic, encoding AAC into `url` (.caf). The packet
     /// table is written by stop(); until then the file isn't readable.
     func start(writingTo url: URL) throws {
@@ -48,12 +71,16 @@ final class MicRecorder: @unchecked Sendable {
         self.url = url
         try attach(voiceProcessing: Config.micVoiceProcessing())
         isRecording = true
+        startWatchdog()
     }
 
     /// Stop capturing and finalize the file. Idempotent.
     func stop() {
         guard isRecording else { return }
         isRecording = false
+        watchdog?.invalidate()
+        watchdog = nil
+        stopObservingConfiguration()
         engine.stop()
         engine.inputNode.removeTap(onBus: 0)
         file = nil
@@ -105,6 +132,7 @@ final class MicRecorder: @unchecked Sendable {
             AVSampleRateKey: monoFormat.sampleRate,
             AVNumberOfChannelsKey: 1,
         ]
+        fileFormat = monoFormat
         do {
             file = try AVAudioFile(
                 forWriting: url!,
@@ -130,6 +158,7 @@ final class MicRecorder: @unchecked Sendable {
             try installRawTap(on: input, inputFormat: inputFormat, monoFormat: monoFormat)
         }
 
+        markBuffer()
         engine.prepare()
         do {
             try engine.start()
@@ -138,6 +167,7 @@ final class MicRecorder: @unchecked Sendable {
             file = nil
             throw RecorderError.engineStartFailed(error)
         }
+        observeConfiguration()
 
         let report = "mic: voiceProcessing=\(input.isVoiceProcessingEnabled) "
             + "input=\(input.outputFormat(forBus: 0)) tap=\(monoFormat)\n"
@@ -154,6 +184,7 @@ final class MicRecorder: @unchecked Sendable {
         input.installTap(onBus: 0, bufferSize: 4096, format: format) { [weak self] buffer, _ in
             guard let self, let file = self.file else { return }
             if self.firstBufferAt == nil { self.firstBufferAt = Date() }
+            self.markBuffer()
 
             if !self.livenessSettled {
                 let frames = Int(buffer.frameLength)
@@ -180,8 +211,10 @@ final class MicRecorder: @unchecked Sendable {
         }
     }
 
-    /// Raw path: tap at the device's native format and downmix to mono. Same
-    /// sample rate on both sides, so the one-shot convert applies.
+    /// Raw path: tap at the device's native format and convert to the file's
+    /// mono format. At start the rates match and a one-shot convert applies;
+    /// after a restart the new device may run at another rate (a headset at
+    /// 24 kHz into a 48 kHz file), which needs the streaming resampler.
     private func installRawTap(
         on input: AVAudioInputNode,
         inputFormat: AVAudioFormat,
@@ -190,20 +223,134 @@ final class MicRecorder: @unchecked Sendable {
         guard let converter = AVAudioConverter(from: inputFormat, to: monoFormat) else {
             throw RecorderError.formatUnsupported(inputFormat)
         }
+        let ratio = monoFormat.sampleRate / inputFormat.sampleRate
         input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
             guard let self, let file = self.file else { return }
             if self.firstBufferAt == nil { self.firstBufferAt = Date() }
-            guard let mono = AVAudioPCMBuffer(
-                pcmFormat: monoFormat,
-                frameCapacity: buffer.frameCapacity
-            ) else { return }
+            self.markBuffer()
+            let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 64
+            guard let mono = AVAudioPCMBuffer(pcmFormat: monoFormat, frameCapacity: capacity) else {
+                return
+            }
             do {
-                try converter.convert(to: mono, from: buffer)
-                try file.write(from: mono)
+                if ratio == 1 {
+                    try converter.convert(to: mono, from: buffer)
+                } else {
+                    // The input block runs synchronously inside convert(),
+                    // on this thread, so these captures never race.
+                    nonisolated(unsafe) var fed = false
+                    nonisolated(unsafe) let source = buffer
+                    var convertError: NSError?
+                    let status = converter.convert(to: mono, error: &convertError) { _, inputStatus in
+                        if fed {
+                            inputStatus.pointee = .noDataNow
+                            return nil
+                        }
+                        fed = true
+                        inputStatus.pointee = .haveData
+                        return source
+                    }
+                    if status == .error, let convertError { throw convertError }
+                }
+                if mono.frameLength > 0 {
+                    try file.write(from: mono)
+                }
             } catch {
                 FileHandle.standardError.write(Data("mic track write failed: \(error)\n".utf8))
             }
         }
+    }
+
+    // MARK: - Recovery
+
+    private func markBuffer() {
+        bufferClock.lock()
+        lastBufferAt = Date()
+        bufferClock.unlock()
+    }
+
+    private func secondsSinceLastBuffer() -> TimeInterval {
+        bufferClock.lock()
+        defer { bufferClock.unlock() }
+        return Date().timeIntervalSince(lastBufferAt)
+    }
+
+    /// The engine posts this and stops itself when its input or output
+    /// hardware changes underneath it.
+    private func observeConfiguration() {
+        stopObservingConfiguration()
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange,
+            object: engine,
+            queue: .main
+        ) { [weak self] _ in
+            self?.restart(reason: "audio configuration changed")
+        }
+    }
+
+    private func stopObservingConfiguration() {
+        if let configObserver {
+            NotificationCenter.default.removeObserver(configObserver)
+        }
+        configObserver = nil
+    }
+
+    /// Catches what the notification misses: sleep stops the engine without
+    /// one. Timers don't fire while asleep, so the first check after wake
+    /// sees the stall.
+    private func startWatchdog() {
+        watchdog?.invalidate()
+        watchdog = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            guard let self, self.isRecording else { return }
+            let quiet = self.secondsSinceLastBuffer()
+            if quiet >= Self.stallSeconds {
+                self.restart(reason: "no mic audio for \(Int(quiet))s")
+            }
+        }
+    }
+
+    /// Rebuild the engine on the current default input and keep appending to
+    /// the same file. Always raw: the voice-processing liveness fallback
+    /// replaces the file, which mid-session would destroy what's recorded.
+    /// A failed restart (no input device yet) is retried by the watchdog.
+    private func restart(reason: String) {
+        guard isRecording, file != nil, let fileFormat else { return }
+        stopObservingConfiguration()
+        engine.stop()
+        engine.inputNode.removeTap(onBus: 0)
+        // Restart the stall clock, so a failure retries after stallSeconds
+        // rather than on every watchdog tick.
+        markBuffer()
+
+        engine = AVAudioEngine()
+        let input = engine.inputNode
+        let inputFormat = input.outputFormat(forBus: 0)
+        do {
+            guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0 else {
+                throw RecorderError.formatUnsupported(inputFormat)
+            }
+            try installRawTap(on: input, inputFormat: inputFormat, monoFormat: fileFormat)
+            engine.prepare()
+            do {
+                try engine.start()
+            } catch {
+                input.removeTap(onBus: 0)
+                throw RecorderError.engineStartFailed(error)
+            }
+        } catch {
+            if !restartFailing {
+                FileHandle.standardError.write(Data(
+                    "mic restart failed (\(reason)): \(error) — retrying\n".utf8
+                ))
+            }
+            restartFailing = true
+            return
+        }
+        restartFailing = false
+        observeConfiguration()
+        FileHandle.standardError.write(Data(
+            "mic restarted (\(reason)) · input=\(inputFormat)\n".utf8
+        ))
     }
 
     /// The voice-processing route delivered a full second of digital silence:
