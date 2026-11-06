@@ -6,6 +6,7 @@ import Foundation
 ///       "recordings_dir": "~/Recordings",
 ///       "transcription": { "enabled": true, "engine": "parakeet", "language": "auto" },
 ///       "mic_voice_processing": true,
+///       "max_recording_minutes": 120,
 ///       "on_stop": "my-hook",
 ///       "hotkeys": { "toggle_recording": "cmd+opt+ctrl+r" }
 ///     }
@@ -72,6 +73,13 @@ enum Config {
     /// recording meetings through the speakers.
     static func micVoiceProcessing() -> Bool {
         load()?["mic_voice_processing"] as? Bool ?? false
+    }
+
+    /// Hard cap on one recording, in minutes. A session still running at the
+    /// cap stops itself, so a forgotten toggle can't record all night.
+    /// Default 120 — comfortably past a long meeting. 0 disables the cap.
+    static func maxRecordingMinutes() -> Int {
+        max(0, load()?["max_recording_minutes"] as? Int ?? 120)
     }
 
     /// Parse the config file. A malformed config is reported on stderr rather

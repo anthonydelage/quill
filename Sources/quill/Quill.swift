@@ -82,6 +82,9 @@ final class AppController {
     private let menuBar: MenuBarController
     private let transcription = TranscriptionCoordinator()
     private var session: RecordingSession?
+    /// Seconds after which the live session stops itself; nil means no cap.
+    /// Read from config at start, so editing config mid-meeting can't cut it.
+    private var sessionCap: TimeInterval?
     private var ticker: Timer?
     // Held for its lifetime — deinit unregisters the hotkey with Carbon.
     private var toggleHotKey: GlobalHotKey?
@@ -141,6 +144,8 @@ final class AppController {
             let newSession = try RecordingSession(root: root)
             try newSession.start()
             session = newSession
+            let capMinutes = Config.maxRecordingMinutes()
+            sessionCap = capMinutes > 0 ? TimeInterval(capMinutes * 60) : nil
             FileHandle.standardError.write(Data("● recording → \(newSession.dir.path)\n".utf8))
         } catch {
             FileHandle.standardError.write(Data("recording start failed: \(error)\n".utf8))
@@ -162,6 +167,7 @@ final class AppController {
             "○ stopped · \(elapsed) · \(session.dir.path)\n".utf8
         ))
         self.session = nil
+        sessionCap = nil
         ticker?.invalidate()
         ticker = nil
         menuBar.update(recording: false, elapsed: nil)
@@ -185,10 +191,22 @@ final class AppController {
 
     private func tick() {
         guard let session else { return }
-        menuBar.update(
-            recording: true,
-            elapsed: Self.format(Date().timeIntervalSince(session.startedAt))
-        )
+        let elapsed = Date().timeIntervalSince(session.startedAt)
+        // Wall-clock elapsed, so a session that outlived the cap during sleep
+        // stops on the first tick after wake.
+        if let sessionCap, elapsed >= sessionCap {
+            FileHandle.standardError.write(Data(
+                "recording hit the \(Self.format(sessionCap)) cap — stopping\n".utf8
+            ))
+            stopSession()
+            playSound("Sosumi")
+            notifyUser(
+                title: "quill — recording stopped at the \(Self.format(sessionCap)) cap",
+                body: session.dir.lastPathComponent
+            )
+            return
+        }
+        menuBar.update(recording: true, elapsed: Self.format(elapsed))
     }
 
     private func openFolder() {
